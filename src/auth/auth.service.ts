@@ -7,6 +7,8 @@ import { UpdateAuthInput } from './dto/update-auth.input';
 import * as bcrypt from 'bcryptjs';
 import { SignResponse } from './dto/sign-response';
 import { SignInInput } from './dto/signin-input';
+import { LogoutResponse } from './dto/logout-response';
+import { NewTokensResponse } from './dto/NewTokensResponse';
 
 @Injectable()
 export class AuthService {
@@ -108,7 +110,7 @@ export class AuthService {
         email,
       },
       {
-        expiresIn: '10s',
+        expiresIn: '1h',
         secret: this.configService.get('JWT_ACCESS_TOKEN_SECRET'),
       },
     );
@@ -138,5 +140,60 @@ export class AuthService {
         refreshToken: hashedRefreshToken,
       },
     });
+  }
+
+  async logout(userId: number): Promise<LogoutResponse> {
+    /**
+     *? logout에 대한 쓸대없는 multiple Mutaion을 막기 위해 refreshToken이 null이 아닐때만 DB를 update 되도록 한다.
+     */
+    await this.prisma.user.updateMany({
+      where: {
+        id: userId,
+        refreshToken: {
+          not: null,
+        },
+      },
+      data: {
+        refreshToken: null,
+      },
+    });
+
+    return {
+      loggedOut: true,
+    };
+  }
+
+  async getNewTokens(
+    userId: number,
+    refreshToken: string,
+  ): Promise<NewTokensResponse> {
+    const user = await this.prisma.user.findUnique({
+      where: {
+        id: userId,
+      },
+    });
+
+    if (!user) {
+      throw new ForbiddenException();
+    }
+
+    const isRefreshTokenCorrect = await bcrypt.compare(
+      refreshToken,
+      user.refreshToken,
+    );
+
+    if (!isRefreshTokenCorrect) {
+      throw new ForbiddenException();
+    }
+
+    const { accessToken, refreshToken: newRefreshToken } =
+      await this.createTokens(user.id, user.email);
+
+    await this.updateRefreshToken(user.id, newRefreshToken);
+
+    return {
+      accessToken,
+      refreshToken: newRefreshToken,
+    };
   }
 }
