@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from 'src/prisma/prisma.service';
@@ -6,6 +6,7 @@ import { SignUpInput } from './dto/signup-input';
 import { UpdateAuthInput } from './dto/update-auth.input';
 import * as bcrypt from 'bcryptjs';
 import { SignResponse } from './dto/sign-response';
+import { SignInInput } from './dto/signin-input';
 
 @Injectable()
 export class AuthService {
@@ -45,8 +46,47 @@ export class AuthService {
     return { accessToken, refreshToken, user: newUser };
   }
 
-  findAll() {
-    return `This action returns all auth`;
+  async signIn({ email, password }: SignInInput) {
+    /**
+     * 1. Check if user exists
+     * 2. Check if password is correct
+     * 3. Create tokens
+     * 4. Update refresh token
+     * 5. Return tokens
+     */
+
+    const user = await this.prisma.user.findUnique({
+      where: {
+        email,
+      },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        password: true,
+      },
+    });
+
+    //? NotFoundException이 더 적절하지만 해킹범에게는
+    //? 아이디가 존재하지 않는다는 힌트가 될 수있다.
+    if (!user) {
+      throw new ForbiddenException();
+    }
+
+    const isPasswordCorrect = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordCorrect) {
+      throw new ForbiddenException();
+    }
+
+    const { accessToken, refreshToken } = await this.createTokens(
+      user.id,
+      user.email,
+    );
+
+    await this.updateRefreshToken(user.id, refreshToken);
+
+    return { accessToken, refreshToken, user };
   }
 
   findOne(id: number) {
